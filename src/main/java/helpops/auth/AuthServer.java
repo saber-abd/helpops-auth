@@ -14,43 +14,24 @@ import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Serveur d'authentification.
- *
- * - Gere les comptes dans "users.txt" (format : login:hash_sha256:role)
- * - Hache les mots de passe en SHA-256 (jamais stockes en clair)
- * - Genere des tokens de session valables 1 heure
- * - Ecoute sur le port 2000
- */
 public class AuthServer extends UnicastRemoteObject implements IAuthService {
-
     private static final String FICHIER_USERS = "users.txt";
-
-    // login -> User
     private Map<String, User> utilisateurs = new HashMap<>();
-
-    // tokenValeur -> Token (session en memoire, reinitialisee au redemarrage)
-    private Map<String, Token> tokensActifs = new HashMap<>();
+    private Map<String, Token> tokensActifs = new HashMap<>(); // tokenValeur -> Token (session en memoire, reinitialisee au redemarrage)
 
     public AuthServer() throws RemoteException {
         super();
         chargerUtilisateurs();
-
-        // Si le fichier est vide, creer des comptes de test
         if (utilisateurs.isEmpty()) {
             inscrire("alice",   "pass123");
             inscrire("bob",     "pass456");
             inscrire("charlie", "pass789");
             System.out.println("[AUTH] Comptes de test crees : alice, bob, charlie");
         }
-
         System.out.println("[AUTH] " + utilisateurs.size() + " utilisateur(s) charge(s).");
     }
 
-    // -------------------------------------------------------------------------
     // Methodes RMI (definies dans IAuthService)
-    // -------------------------------------------------------------------------
-
     @Override
     public Token connecter(String login, String motDePasse) throws RemoteException {
         User user = utilisateurs.get(login);
@@ -104,11 +85,6 @@ public class AuthServer extends UnicastRemoteObject implements IAuthService {
         return "AuthServer OK";
     }
 
-    // -------------------------------------------------------------------------
-    // Persistance : lecture / ecriture du fichier users.txt
-    // Format de chaque ligne : login:hash_sha256:role
-    // -------------------------------------------------------------------------
-
     private void chargerUtilisateurs() {
         File f = new File(FICHIER_USERS);
         if (!f.exists()) return;
@@ -138,11 +114,6 @@ public class AuthServer extends UnicastRemoteObject implements IAuthService {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Hachage SHA-256
-    // -------------------------------------------------------------------------
-
-    /** Transforme un mot de passe en son empreinte SHA-256 (hexadecimal). */
     private String hacher(String motDePasse) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -154,10 +125,6 @@ public class AuthServer extends UnicastRemoteObject implements IAuthService {
             throw new RuntimeException("Erreur de hachage SHA-256", e);
         }
     }
-
-    // -------------------------------------------------------------------------
-    // Demarrage
-    // -------------------------------------------------------------------------
 
     public static void main(String[] args) {
         try {

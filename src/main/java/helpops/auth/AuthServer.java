@@ -1,6 +1,6 @@
 package helpops.auth;
 
-import helpops.interfaces.IAuthService;
+import helpops.interfaces.RMIAuthService;
 import helpops.model.Token;
 import helpops.model.User;
 
@@ -14,7 +14,7 @@ import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
 
-public class AuthServer extends UnicastRemoteObject implements IAuthService {
+public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
     private static final String FICHIER_USERS = "users.txt";
     private Map<String, User> utilisateurs = new HashMap<>();
     private Map<String, Token> tokensActifs = new HashMap<>(); // tokenValeur -> Token (session en memoire, reinitialisee au redemarrage)
@@ -31,7 +31,7 @@ public class AuthServer extends UnicastRemoteObject implements IAuthService {
         System.out.println("[AUTH] " + utilisateurs.size() + " utilisateur(s) charge(s).");
     }
 
-    // Methodes RMI (definies dans IAuthService)
+    // methodes RMI (dans RMIAuthService)
     @Override
     public Token connecter(String login, String motDePasse) throws RemoteException {
         User user = utilisateurs.get(login);
@@ -129,10 +129,9 @@ public class AuthServer extends UnicastRemoteObject implements IAuthService {
     public static void main(String[] args) {
         try {
             System.setProperty("file.encoding", "UTF-8");
-            // Creer le Registry RMI sur le port 2000
+            // creer le registry RMI sur port 2000
             Registry registry = LocateRegistry.createRegistry(2000);
             System.out.println("[AUTH] Registry RMI cree sur le port 2000");
-
             AuthServer auth = new AuthServer();
             registry.rebind("AuthService", auth);
 

@@ -15,9 +15,13 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
+    //fichier contenant les utilisateur, leur role et le hash du mdp utilisateur
     private static final String FICHIER_USERS = "users.txt";
+
     private Map<String, User> utilisateurs = new HashMap<>();
-    private Map<String, Token> tokensActifs = new HashMap<>(); // tokenValeur -> Token (session en memoire, reinitialisee au redemarrage)
+
+    // tokenValeur -> Token (session en memoire, reinitialisee au redemarrage)
+    private Map<String, Token> tokensActifs = new HashMap<>();
 
     public AuthServer() throws RemoteException {
         super();
@@ -37,23 +41,21 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
         User user = utilisateurs.get(login);
         if (user == null) {
             System.out.println("[AUTH] Login inconnu : " + login);
-            return null;
-        }
+            return null;}
         if (!user.getMotDePasseHash().equals(hacher(motDePasse))) {
             System.out.println("[AUTH] Mauvais mot de passe pour : " + login);
-            return null;
-        }
+            return null;}
         Token token = new Token(login);
         tokensActifs.put(token.getValeur(), token);
         System.out.println("[AUTH] Connexion OK : " + login);
         return token;
     }
 
+    // fonction permettant d'inscrire un nouveau utilisateur , le role par defaut est UTILISATEUR
     @Override
     public boolean inscrire(String login, String motDePasse) throws RemoteException {
         if (login == null || login.isBlank() || motDePasse == null || motDePasse.isBlank()) {
-            return false;
-        }
+            return false;}
         if (utilisateurs.containsKey(login)) {
             System.out.println("[AUTH] Login deja utilise : " + login);
             return false;
@@ -69,22 +71,20 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
         Token t = tokensActifs.get(tokenValeur);
         if (t == null || !t.estValide()) {
             tokensActifs.remove(tokenValeur);
-            return false;
-        }
-        return true;
-    }
+            return false;}
+        return true;}
 
     @Override
     public String getLoginDepuisToken(String tokenValeur) throws RemoteException {
         if (!verifierToken(tokenValeur)) return null;
-        return tokensActifs.get(tokenValeur).getLogin();
-    }
+        return tokensActifs.get(tokenValeur).getLogin();}
 
     @Override
     public String ping() throws RemoteException {
         return "AuthServer OK";
     }
 
+    // Lit le fichier "users.txt" au démarrage pour reconstruire la liste des utilisateurs (login, hash, rôle)
     private void chargerUtilisateurs() {
         File f = new File(FICHIER_USERS);
         if (!f.exists()) return;
@@ -104,6 +104,7 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
         }
     }
 
+    // Sauvegarde des nouveau utilisateur dans le fichier "users.txt"
     private void sauvegarderUtilisateurs() {
         try (PrintWriter pw = new PrintWriter(new FileWriter(FICHIER_USERS, StandardCharsets.UTF_8))) {
             for (User u : utilisateurs.values()) {

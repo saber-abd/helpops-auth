@@ -130,9 +130,11 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
     public static void main(String[] args) {
         try {
             System.setProperty("file.encoding", "UTF-8");
+
             // creer le registry RMI sur port 2000
             Registry registry = LocateRegistry.createRegistry(2000);
             System.out.println("[AUTH] Registry RMI cree sur le port 2000");
+
             AuthServer auth = new AuthServer();
             registry.rebind("AuthService", auth);
 

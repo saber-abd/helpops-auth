@@ -3,144 +3,138 @@ package helpops.auth;
 import helpops.interfaces.RMIAuthService;
 import helpops.model.Token;
 import helpops.model.User;
+import helpops.utils.DatabaseManager;
 
-import java.io.*;
-import java.nio.charset.StandardCharsets;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.rmi.server.UnicastRemoteObject;
-import java.security.MessageDigest;
+import java.sql.*;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
-    //fichier contenant les utilisateur, leur role et le hash du mdp utilisateur
-    private static final String FICHIER_USERS = "users.txt";
 
-    private Map<String, User> utilisateurs = new HashMap<>();
-
-    // tokenValeur -> Token (session en memoire, reinitialisee au redemarrage)
+    // Sessions actives
     private Map<String, Token> tokensActifs = new HashMap<>();
 
     public AuthServer() throws RemoteException {
         super();
-        chargerUtilisateurs();
-        if (utilisateurs.isEmpty()) {
-            inscrire("alice",   "pass123");
-            inscrire("bob",     "pass456");
-            inscrire("charlie", "pass789");
-            System.out.println("[AUTH] Comptes de test crees : alice, bob, charlie");
+        System.out.println("[AUTH] Serveur d'authentification prêt ");
+    }
+
+    @Override
+    public Token connecter(String login, String mdpHache) throws RemoteException {
+        String sql = "SELECT user_uuid, role FROM users WHERE login = ? AND password_hash = ?";
+
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setString(1, login);
+            pstmt.setString(2, mdpHache);
+            ResultSet rs = pstmt.executeQuery();
+
+            if (rs.next()) {
+                UUID uuid = (UUID) rs.getObject("user_uuid");
+                String role = rs.getString("role");
+
+                Token t = new Token(UUID.randomUUID().toString(), login, uuid, role);
+                tokensActifs.put(t.getValeur(), t);
+                System.out.println("[AUTH] Connexion réussie : " + login + " (" + role + ")");
+                return t;
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
         }
-        System.out.println("[AUTH] " + utilisateurs.size() + " utilisateur(s) charge(s).");
+        return null;
     }
-
-    // methodes RMI (dans RMIAuthService)
     @Override
-    public Token connecter(String login, String motDePasse) throws RemoteException {
-        User user = utilisateurs.get(login);
-        if (user == null) {
-            System.out.println("[AUTH] Login inconnu : " + login);
-            return null;}
-        if (!user.getMotDePasseHash().equals(hacher(motDePasse))) {
-            System.out.println("[AUTH] Mauvais mot de passe pour : " + login);
-            return null;}
-        Token token = new Token(login);
-        tokensActifs.put(token.getValeur(), token);
-        System.out.println("[AUTH] Connexion OK : " + login);
-        return token;
-    }
+    public boolean changerRole(String tokenAgent, UUID utilisateurAChanger, String nouveauRole) throws RemoteException {
+        // 1. Vérifier que celui qui demande est bien un AGENT
+        String roleDemandeur = getRoleDepuisToken(tokenAgent);
+        if (!"AGENT".equalsIgnoreCase(roleDemandeur)) {
+            throw new RemoteException("Seul un agent peut modifier les privilèges.");
+        }
 
-    // fonction permettant d'inscrire un nouveau utilisateur , le role par defaut est UTILISATEUR
-    @Override
-    public boolean inscrire(String login, String motDePasse) throws RemoteException {
-        if (login == null || login.isBlank() || motDePasse == null || motDePasse.isBlank()) {
-            return false;}
-        if (utilisateurs.containsKey(login)) {
-            System.out.println("[AUTH] Login deja utilise : " + login);
+        // 2. Mettre à jour en base de données
+        String sql = "UPDATE users SET role = ? WHERE user_uuid = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, nouveauRole.toUpperCase());
+            pstmt.setObject(2, utilisateurAChanger);
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
             return false;
         }
-        utilisateurs.put(login, new User(login, hacher(motDePasse), "UTILISATEUR"));
-        sauvegarderUtilisateurs();
-        System.out.println("[AUTH] Nouvel utilisateur inscrit : " + login);
-        return true;
+    }
+    @Override
+    public boolean inscrire(String login, String mdpHache) throws RemoteException {
+        String sql = "INSERT INTO users (user_uuid, login, password_hash, role) VALUES (?, ?, ?, ?)";
+
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setObject(1, UUID.randomUUID());
+            pstmt.setString(2, login);
+            pstmt.setString(3, mdpHache);
+            pstmt.setString(4, "UTILISATEUR");
+
+            pstmt.executeUpdate();
+            return true;
+        } catch (SQLException e) {
+            // Si c'est un code d'erreur de duplication (23505 sur Postgres)
+            if ("23505".equals(e.getSQLState())) {
+                System.err.println("[AUTH] Login déjà pris : " + login);
+            } else {
+                System.err.println("[AUTH] Erreur critique BDD : " + e.getMessage());
+            }
+            return false;
+        }
+    }
+
+    @Override
+    public UUID getUuidDepuisToken(String tokenValeur) throws RemoteException {
+        Token t = tokensActifs.get(tokenValeur);
+        if (t != null && t.estValide()) {
+            return t.getUserUuid(); // Le serveur d'incident récupère l'UUID sans voir le login
+        }
+        return null;
+    }
+
+    @Override
+    public String getRoleDepuisToken(String tokenValeur) throws RemoteException {
+        Token t = tokensActifs.get(tokenValeur);
+        if (t != null && t.estValide()) {
+            return t.getRole();
+        }
+        return null;
     }
 
     @Override
     public boolean verifierToken(String tokenValeur) throws RemoteException {
         Token t = tokensActifs.get(tokenValeur);
         if (t == null || !t.estValide()) {
-            tokensActifs.remove(tokenValeur);
-            return false;}
-        return true;}
-
-    @Override
-    public String getLoginDepuisToken(String tokenValeur) throws RemoteException {
-        if (!verifierToken(tokenValeur)) return null;
-        return tokensActifs.get(tokenValeur).getLogin();}
+            if (t != null) tokensActifs.remove(tokenValeur);
+            return false;
+        }
+        return true;
+    }
 
     @Override
     public String ping() throws RemoteException {
         return "AuthServer OK";
     }
 
-    // Lit le fichier "users.txt" au démarrage pour reconstruire la liste des utilisateurs (login, hash, rôle)
-    private void chargerUtilisateurs() {
-        File f = new File(FICHIER_USERS);
-        if (!f.exists()) return;
-        try (BufferedReader br = new BufferedReader(new FileReader(f, StandardCharsets.UTF_8))) {
-            String ligne;
-            while ((ligne = br.readLine()) != null) {
-                ligne = ligne.trim();
-                if (ligne.isEmpty()) continue;
-                String[] parts = ligne.split(":");
-                if (parts.length == 3) {
-                    utilisateurs.put(parts[0], new User(parts[0], parts[1], parts[2]));
-                }
-            }
-            System.out.println("[AUTH] Fichier users.txt lu.");
-        } catch (Exception e) {
-            System.err.println("[AUTH] Erreur lecture users.txt : " + e.getMessage());
-        }
-    }
-
-    // Sauvegarde des nouveau utilisateur dans le fichier "users.txt"
-    private void sauvegarderUtilisateurs() {
-        try (PrintWriter pw = new PrintWriter(new FileWriter(FICHIER_USERS, StandardCharsets.UTF_8))) {
-            for (User u : utilisateurs.values()) {
-                pw.println(u.getLogin() + ":" + u.getMotDePasseHash() + ":" + u.getRole());
-            }
-        } catch (Exception e) {
-            System.err.println("[AUTH] Erreur ecriture users.txt : " + e.getMessage());
-        }
-    }
-
-    private String hacher(String motDePasse) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = md.digest(motDePasse.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : bytes) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (Exception e) {
-            throw new RuntimeException("Erreur de hachage SHA-256", e);
-        }
-    }
-
     public static void main(String[] args) {
         try {
-            System.setProperty("file.encoding", "UTF-8");
-
-            // creer le registry RMI sur port 2000
-            Registry registry = LocateRegistry.createRegistry(2000);
-            System.out.println("[AUTH] Registry RMI cree sur le port 2000");
-
+            // Un seul registre sur le port 1099 comme demandé
+            Registry registry = LocateRegistry.createRegistry(1099);
             AuthServer auth = new AuthServer();
             registry.rebind("AuthService", auth);
-
-            System.out.println("[AUTH] Service 'AuthService' enregistre. En attente de connexions...");
+            System.out.println("[AUTH] Ecoute sur le port 1099");
         } catch (Exception e) {
-            System.err.println("[AUTH] Erreur demarrage : " + e.getMessage());
             e.printStackTrace();
         }
     }

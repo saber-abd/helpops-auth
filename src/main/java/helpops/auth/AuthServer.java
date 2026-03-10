@@ -2,9 +2,7 @@ package helpops.auth;
 
 import helpops.interfaces.RMIAuthService;
 import helpops.model.Token;
-import helpops.model.User;
 import helpops.utils.DatabaseManager;
-
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
@@ -14,6 +12,11 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+
+/**
+ * Serveur d'Authentification : Gère la sécurité, les sessions et les rôles.
+ * Centralise l'accès à la table 'users' de PostgreSQL.
+ */
 public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
 
     // Sessions actives
@@ -21,16 +24,15 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
 
     public AuthServer() throws RemoteException {
         super();
-        System.out.println("[AUTH] Serveur d'authentification prêt ");
+        System.out.println("[AUTH] Serveur d'authentification prêt ... ");
     }
 
     @Override
     public Token connecter(String login, String mdpHache) throws RemoteException {
         String sql = "SELECT user_uuid, role FROM users WHERE login = ? AND password_hash = ?";
-
+        //connexion a la bd
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
             pstmt.setString(1, login);
             pstmt.setString(2, mdpHache);
             ResultSet rs = pstmt.executeQuery();
@@ -49,15 +51,17 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
         }
         return null;
     }
+
+
     @Override
     public boolean changerRole(String tokenAgent, UUID utilisateurAChanger, String nouveauRole) throws RemoteException {
-        // 1. Vérifier que celui qui demande est bien un AGENT
+        // Vérifier que celui qui demande est bien un AGENT
         String roleDemandeur = getRoleDepuisToken(tokenAgent);
         if (!"AGENT".equalsIgnoreCase(roleDemandeur)) {
             throw new RemoteException("Seul un agent peut modifier les privilèges.");
         }
 
-        // 2. Mettre à jour en base de données
+        //Mettre à jour en base de données
         String sql = "UPDATE users SET role = ? WHERE user_uuid = ?";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -69,6 +73,8 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
             return false;
         }
     }
+
+
     @Override
     public boolean inscrire(String login, String mdpHache) throws RemoteException {
         String sql = "INSERT INTO users (user_uuid, login, password_hash, role) VALUES (?, ?, ?, ?)";
@@ -84,7 +90,7 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
             pstmt.executeUpdate();
             return true;
         } catch (SQLException e) {
-            // Si c'est un code d'erreur de duplication (23505 sur Postgres)
+            // Code d'erreur de duplication (23505 sur Postgres)
             if ("23505".equals(e.getSQLState())) {
                 System.err.println("[AUTH] Login déjà pris : " + login);
             } else {
@@ -98,7 +104,7 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
     public UUID getUuidDepuisToken(String tokenValeur) throws RemoteException {
         Token t = tokensActifs.get(tokenValeur);
         if (t != null && t.estValide()) {
-            return t.getUserUuid(); // Le serveur d'incident récupère l'UUID sans voir le login
+            return t.getUserUuid();
         }
         return null;
     }
@@ -129,7 +135,6 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
 
     public static void main(String[] args) {
         try {
-            // Un seul registre sur le port 1099 comme demandé
             Registry registry = LocateRegistry.createRegistry(1099);
             AuthServer auth = new AuthServer();
             registry.rebind("AuthService", auth);

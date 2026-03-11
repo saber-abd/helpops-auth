@@ -12,13 +12,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-
-/**
- * Serveur d'Authentification : Gère la sécurité, les sessions et les rôles.
- * Centralise l'accès à la table 'users' de PostgreSQL.
- */
+// Serveur d'Authentification : Gestion de la sécurité, des sessions et des rôles
 public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
-
     // Sessions actives
     private Map<String, Token> tokensActifs = new HashMap<>();
 
@@ -36,32 +31,23 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
             pstmt.setString(1, login);
             pstmt.setString(2, mdpHache);
             ResultSet rs = pstmt.executeQuery();
-
             if (rs.next()) {
                 UUID uuid = (UUID) rs.getObject("user_uuid");
                 String role = rs.getString("role");
-
                 Token t = new Token(UUID.randomUUID().toString(), login, uuid, role);
                 tokensActifs.put(t.getValeur(), t);
                 System.out.println("[AUTH] Connexion réussie : " + login + " (" + role + ")");
                 return t;
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-        return null;
-    }
-
+            }} catch (SQLException e) {
+            e.printStackTrace();}
+        return null;}
 
     @Override
     public boolean changerRole(String tokenAgent, UUID utilisateurAChanger, String nouveauRole) throws RemoteException {
-        // Vérifier que celui qui demande est bien un AGENT
         String roleDemandeur = getRoleDepuisToken(tokenAgent);
         if (!"AGENT".equalsIgnoreCase(roleDemandeur)) {
-            throw new RemoteException("Seul un agent peut modifier les privilèges.");
-        }
-
-        //Mettre à jour en base de données
+            throw new RemoteException("Seul un agent peut modifier les privilèges.");}
+        //Mise à jour en base de données
         String sql = "UPDATE users SET role = ? WHERE user_uuid = ?";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -70,63 +56,47 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
             return pstmt.executeUpdate() > 0;
         } catch (SQLException e) {
             e.printStackTrace();
-            return false;
-        }
-    }
-
+            return false;}}
 
     @Override
     public boolean inscrire(String login, String mdpHache) throws RemoteException {
         String sql = "INSERT INTO users (user_uuid, login, password_hash, role) VALUES (?, ?, ?, ?)";
-
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
             pstmt.setObject(1, UUID.randomUUID());
             pstmt.setString(2, login);
             pstmt.setString(3, mdpHache);
             pstmt.setString(4, "UTILISATEUR");
-
             pstmt.executeUpdate();
             return true;
         } catch (SQLException e) {
-            // Code d'erreur de duplication (23505 sur Postgres)
             if ("23505".equals(e.getSQLState())) {
                 System.err.println("[AUTH] Login déjà pris : " + login);
             } else {
-                System.err.println("[AUTH] Erreur critique BDD : " + e.getMessage());
-            }
-            return false;
-        }
-    }
+                System.err.println("[AUTH] Erreur critique BDD : " + e.getMessage());}
+            return false;}}
 
     @Override
     public UUID getUuidDepuisToken(String tokenValeur) throws RemoteException {
         Token t = tokensActifs.get(tokenValeur);
         if (t != null && t.estValide()) {
-            return t.getUserUuid();
-        }
-        return null;
-    }
+            return t.getUserUuid();}
+        return null;}
 
     @Override
     public String getRoleDepuisToken(String tokenValeur) throws RemoteException {
         Token t = tokensActifs.get(tokenValeur);
         if (t != null && t.estValide()) {
-            return t.getRole();
-        }
-        return null;
-    }
+            return t.getRole();}
+        return null;}
 
     @Override
     public boolean verifierToken(String tokenValeur) throws RemoteException {
         Token t = tokensActifs.get(tokenValeur);
         if (t == null || !t.estValide()) {
             if (t != null) tokensActifs.remove(tokenValeur);
-            return false;
-        }
-        return true;
-    }
+            return false;}
+        return true;}
 
     @Override
     public String ping() throws RemoteException {
@@ -140,7 +110,6 @@ public class AuthServer extends UnicastRemoteObject implements RMIAuthService {
             registry.rebind("AuthService", auth);
             System.out.println("[AUTH] Ecoute sur le port 1099");
         } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
+            e.printStackTrace();}}
+
 }
